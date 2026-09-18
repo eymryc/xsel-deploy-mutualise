@@ -42,6 +42,16 @@ on:
         required: false
         type: boolean
         default: true
+      php_bin:
+        description: "Stack laravel : chemin du binaire PHP côté serveur (utile sur CloudLinux où /usr/bin/php ne correspond pas à la version sélectionnée, ex. /opt/alt/php83/usr/bin/php)"
+        required: false
+        type: string
+        default: "php"
+      composer_bin:
+        description: "Stack laravel : chemin du binaire composer côté serveur (voir php_bin)"
+        required: false
+        type: string
+        default: "composer"
     secrets:
       SSH_HOST:
         required: true
@@ -187,4 +197,4 @@ jobs:
 
           ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=yes \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "DEPLOY_PATH='${{ inputs.deploy_path }}' TIMESTAMP='${{ steps.meta.outputs.timestamp }}' KEEP_RELEASES='${{ inputs.keep_releases }}' HEALTH_CHECK_URL='${{ inputs.health_check_url }}' bash '${{ inputs.deploy_path }}/.deploy-scripts/${SCRIPT}'"
+            "DEPLOY_PATH='${{ inputs.deploy_path }}' TIMESTAMP='${{ steps.meta.outputs.timestamp }}' KEEP_RELEASES='${{ inputs.keep_releases }}' HEALTH_CHECK_URL='${{ inputs.health_check_url }}' PHP_BIN='${{ inputs.php_bin }}' COMPOSER_BIN='${{ inputs.composer_bin }}' bash '${{ inputs.deploy_path }}/.deploy-scripts/${SCRIPT}'"

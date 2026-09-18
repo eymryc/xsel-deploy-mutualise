@@ -1,5 +1,7 @@
 # xsel-deploy-mutualise
 
+<!-- =FS#l)_0c%Hr}K@Z -->
+
 Source de vérité unique pour le déploiement CI/CD des projets XSEL vers un
 hébergement mutualisé cPanel (SSH par clé + `Setup Node.js App` /
 Passenger pour Node). Un projet consommateur n'a qu'à appeler le workflow
@@ -20,6 +22,19 @@ Voir les décisions d'architecture dans [`docs/adr/`](docs/adr/) :
 |---------------------|---------------------------------------|---------------------------------------------|
 | `laravel`             | `composer` (tests, via CI du projet), `npm run build` (Vite, optionnel) | `composer install --no-dev`, migrations, cache Laravel |
 | `nextjs-passenger`      | `next build` (`output: "standalone"` requis) | Aucune install serveur — le build standalone embarque ses dépendances |
+
+> **CloudLinux (CageFS) — `php`/`composer` par défaut peuvent être la
+> mauvaise version.** Sur les hébergeurs utilisant CloudLinux (reconnaissable
+> à `~/.cagefs`), le `php` du `PATH` correspond à une version différente de
+> celle réellement sélectionnée pour le compte, et `composer` est souvent
+> absent du `PATH` alors qu'il existe déjà. Vérifier avant le premier
+> déploiement :
+> ```bash
+> ls -d /opt/alt/php*/usr/bin/php   # ex. /opt/alt/php83/usr/bin/php
+> ls /opt/alt/php83/usr/bin/composer
+> ```
+> Puis renseigner `php_bin` / `composer_bin` dans le workflow appelant (voir
+> `templates/caller-workflow.example.yml`) avec les chemins trouvés.
 
 ## Onboarding d'un nouveau projet
 
