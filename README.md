@@ -23,34 +23,84 @@ Voir les décisions d'architecture dans [`docs/adr/`](docs/adr/) :
 
 ## Onboarding d'un nouveau projet
 
-1. **Générer une clé SSH dédiée au déploiement** dans cPanel → *SSH Access*
-   → *Manage SSH Keys* → *Generate a New Key* (pas de passphrase), puis
-   *Authorize* sur cette clé.
-2. Récupérer host / port / utilisateur SSH sur la page principale
-   *SSH Access*.
-3. Sur le serveur, créer la structure de base pour chaque app (avant le
-   premier déploiement) — copier [`scripts/bootstrap-app.sh`](scripts/bootstrap-app.sh)
-   sur le serveur (ou coller son contenu dans un fichier), puis :
-   ```bash
-   DEPLOY_PATH=/home/<user>/<app> STACK=laravel bash bootstrap-app.sh
-   # ou pour le frontend :
-   DEPLOY_PATH=/home/<user>/<app> STACK=nextjs-passenger bash bootstrap-app.sh
+### 1. Générer et autoriser une clé SSH dédiée au déploiement
 
-   # Laravel uniquement : remplir le .env de prod (créé vide par le script)
-   nano /home/<user>/<app>/shared/.env
-   ```
-4. Côté cPanel → *Domains* : document root du (sous-)domaine sur
-   `<deploy_path>/current/public` (Laravel), ou créer l'app dans
-   *Setup Node.js App* pointant sur `<deploy_path>/current/server.js`
-   (Next.js — voir [`templates/passenger-nextjs-notes.md`](templates/passenger-nextjs-notes.md)
-   pour le détail).
-5. Dans le projet consommateur, ajouter les secrets GitHub Actions :
-   `DEPLOY_SSH_HOST`, `DEPLOY_SSH_PORT`, `DEPLOY_SSH_USER`,
-   `DEPLOY_SSH_PRIVATE_KEY` (le contenu de la clé privée générée à l'étape 1).
-6. Copier [`templates/caller-workflow.example.yml`](templates/caller-workflow.example.yml)
-   dans `.github/workflows/` du projet, adapter `stack` / `app_path` /
-   `deploy_path` / `health_check_url`.
-7. Premier push sur `main` → déploiement automatique.
+cPanel → *SSH Access* → *Manage SSH Keys* → **Generate a New Key**.
+- Nom : `github-actions-deploy` (ou similaire).
+- **Passphrase : laisser vide** (l'automatisation ne peut pas la saisir).
+- Générer, puis dans la liste *Private Keys*, cliquer **Manage** sur cette
+  clé → **Authorize** (sans ça, la connexion SSH sera refusée même avec la
+  bonne clé).
+
+### 2. Récupérer host / port / utilisateur SSH
+
+Retour à l'écran principal **cPanel → SSH Access** (pas le sous-écran
+"Manage Keys"). Il affiche un exemple de commande de connexion, du type :
+
+```
+ssh moncpaneluser@monserveur.exemple.com -p 21098
+```
+
+- `moncpaneluser` → `DEPLOY_SSH_USER`
+- `monserveur.exemple.com` → `DEPLOY_SSH_HOST` (peut aussi être une IP)
+- `21098` → `DEPLOY_SSH_PORT` (souvent différent de 22 sur du mutualisé —
+  bien vérifier, ne pas supposer 22)
+
+### 3. Télécharger la clé privée générée à l'étape 1
+
+Toujours dans *Manage SSH Keys*, sur la clé créée : **View/Download** →
+télécharger le fichier de clé privée (pas la `.pub`) quelque part sur ta
+machine, ex. `~/Downloads/github-actions-deploy`.
+
+### 4. Ajouter les 4 secrets GitHub Actions
+
+Dans le repo du projet consommateur (ex. `eymryc/peci`) → *Settings* →
+*Secrets and variables* → *Actions* → *New repository secret* — ou en
+ligne de commande avec le [GitHub CLI](https://cli.github.com/), une fois
+les valeurs des étapes 2 et 3 en main :
+
+```bash
+gh secret set DEPLOY_SSH_HOST --repo <owner>/<repo> --body "monserveur.exemple.com"
+gh secret set DEPLOY_SSH_PORT --repo <owner>/<repo> --body "21098"
+gh secret set DEPLOY_SSH_USER --repo <owner>/<repo> --body "moncpaneluser"
+gh secret set DEPLOY_SSH_PRIVATE_KEY --repo <owner>/<repo> < ~/Downloads/github-actions-deploy
+```
+
+La dernière commande lit le fichier directement (`<`) plutôt que de coller
+le contenu de la clé en argument — évite qu'elle traîne dans l'historique
+du shell ou d'une conversation.
+
+### 5. Créer la structure de base sur le serveur (une fois par app)
+
+Copier [`scripts/bootstrap-app.sh`](scripts/bootstrap-app.sh) sur le
+serveur (`scp` ou coller son contenu dans un fichier via `nano`), puis :
+```bash
+ssh <user>@<host> -p <port>
+DEPLOY_PATH=/home/<user>/<app> STACK=laravel bash bootstrap-app.sh
+# ou pour le frontend :
+DEPLOY_PATH=/home/<user>/<app> STACK=nextjs-passenger bash bootstrap-app.sh
+
+# Laravel uniquement : remplir le .env de prod (créé vide par le script)
+nano /home/<user>/<app>/shared/.env
+```
+
+### 6. Configurer cPanel pour servir l'app
+
+- **Laravel** : cPanel → *Domains* → document root du (sous-)domaine sur
+  `<deploy_path>/current/public`.
+- **Next.js** : cPanel → *Setup Node.js App* → *Create Application*,
+  fichier de démarrage `current/server.js` — détail dans
+  [`templates/passenger-nextjs-notes.md`](templates/passenger-nextjs-notes.md).
+
+### 7. Ajouter le workflow appelant
+
+Copier [`templates/caller-workflow.example.yml`](templates/caller-workflow.example.yml)
+dans `.github/workflows/` du projet, adapter `stack` / `app_path` /
+`deploy_path` / `health_check_url`.
+
+### 8. Premier déploiement
+
+Push sur `main` → déploiement automatique.
 
 ## Rollback manuel
 
