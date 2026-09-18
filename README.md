@@ -29,10 +29,14 @@ Voir les décisions d'architecture dans [`docs/adr/`](docs/adr/) :
 2. Récupérer host / port / utilisateur SSH sur la page principale
    *SSH Access*.
 3. Sur le serveur, créer la structure de base pour chaque app (avant le
-   premier déploiement) :
+   premier déploiement) — copier [`scripts/bootstrap-app.sh`](scripts/bootstrap-app.sh)
+   sur le serveur (ou coller son contenu dans un fichier), puis :
    ```bash
-   mkdir -p /home/<user>/<app>/{releases,shared}
-   # Laravel uniquement : déposer le .env de prod
+   DEPLOY_PATH=/home/<user>/<app> STACK=laravel bash bootstrap-app.sh
+   # ou pour le frontend :
+   DEPLOY_PATH=/home/<user>/<app> STACK=nextjs-passenger bash bootstrap-app.sh
+
+   # Laravel uniquement : remplir le .env de prod (créé vide par le script)
    nano /home/<user>/<app>/shared/.env
    ```
 4. Côté cPanel → *Domains* : document root du (sous-)domaine sur
