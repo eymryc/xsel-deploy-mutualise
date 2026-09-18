@@ -1,0 +1,190 @@
+name: Deploy (mutualisé)
+
+# Workflow réutilisable — voir ADR-0004. Ne pas dupliquer dans les projets
+# consommateurs : ils l'appellent via `uses:` (voir
+# templates/caller-workflow.example.yml).
+
+on:
+  workflow_call:
+    inputs:
+      stack:
+        description: "'laravel' ou 'nextjs-passenger'"
+        required: true
+        type: string
+      app_path:
+        description: "Sous-dossier du repo appelant contenant cette app (ex. 'backend')"
+        required: false
+        type: string
+        default: "."
+      deploy_path:
+        description: "Chemin absolu sur le serveur (contient releases/, shared/, current)"
+        required: true
+        type: string
+      php_version:
+        required: false
+        type: string
+        default: "8.3"
+      node_version:
+        required: false
+        type: string
+        default: "20"
+      keep_releases:
+        required: false
+        type: number
+        default: 5
+      health_check_url:
+        description: "URL publique à vérifier après bascule (ex. https://api.peci.org/up) — optionnel mais recommandé"
+        required: false
+        type: string
+        default: ""
+      build_frontend_assets:
+        description: "Stack laravel uniquement : lancer 'npm run build' (Vite) avant déploiement"
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      SSH_HOST:
+        required: true
+      SSH_PORT:
+        required: true
+      SSH_USER:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+
+jobs:
+  deploy:
+    name: Build & deploy (${{ inputs.stack }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Valider la stack demandée
+        run: |
+          case "${{ inputs.stack }}" in
+            laravel|nextjs-passenger) ;;
+            *) echo "::error::stack invalide : '${{ inputs.stack }}' (attendu: laravel | nextjs-passenger)"; exit 1 ;;
+          esac
+
+      - name: Checkout du projet appelant
+        uses: actions/checkout@v4
+        with:
+          path: app
+
+      # Limite connue : GitHub n'expose pas de façon fiable, depuis l'intérieur
+      # d'un workflow réutilisable, le ref exact avec lequel il a été appelé
+      # (@main vs @v1.2.0). Les scripts serveur sont donc toujours pris sur
+      # `main`, même si le projet appelant épingle ce workflow sur un tag —
+      # voir ADR-0004. À revisiter si ça devient un problème en pratique
+      # (ex. en dupliquant le ref en input explicite `kit_ref`).
+      - name: Checkout xsel-deploy-mutualise (scripts serveur, toujours main)
+        uses: actions/checkout@v4
+        with:
+          repository: eymryc/xsel-deploy-mutualise
+          ref: main
+          path: deploy-kit
+
+      - name: Timestamp de la release
+        id: meta
+        run: echo "timestamp=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------------
+      # Build — Laravel
+      # ---------------------------------------------------------------------
+      - name: Setup PHP
+        if: inputs.stack == 'laravel'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php_version }}
+          coverage: none
+
+      - name: Setup Node (build assets Laravel)
+        if: inputs.stack == 'laravel' && inputs.build_frontend_assets
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+          cache-dependency-path: app/${{ inputs.app_path }}/package-lock.json
+
+      - name: npm ci && npm run build (assets Vite)
+        if: inputs.stack == 'laravel' && inputs.build_frontend_assets
+        working-directory: app/${{ inputs.app_path }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Préparer le paquet de release (Laravel)
+        if: inputs.stack == 'laravel'
+        id: package_laravel
+        run: |
+          mkdir -p /tmp/release
+          rsync -a \
+            --exclude='.git' --exclude='.env' --exclude='.env.*' \
+            --exclude='storage' --exclude='node_modules' --exclude='vendor' \
+            --exclude='tests' \
+            "app/${{ inputs.app_path }}/" /tmp/release/
+
+      # ---------------------------------------------------------------------
+      # Build — Next.js (Passenger)
+      # ---------------------------------------------------------------------
+      - name: Setup Node
+        if: inputs.stack == 'nextjs-passenger'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+          cache-dependency-path: app/${{ inputs.app_path }}/package-lock.json
+
+      - name: npm ci && npm run build
+        if: inputs.stack == 'nextjs-passenger'
+        working-directory: app/${{ inputs.app_path }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Préparer le paquet de release (Next.js standalone)
+        if: inputs.stack == 'nextjs-passenger'
+        run: |
+          APP="app/${{ inputs.app_path }}"
+          [ -f "$APP/.next/standalone/server.js" ] || {
+            echo "::error::.next/standalone/server.js introuvable — ajoutez output: 'standalone' dans next.config (voir ADR-0003)."
+            exit 1
+          }
+          mkdir -p /tmp/release
+          rsync -a "$APP/.next/standalone/" /tmp/release/
+          mkdir -p /tmp/release/.next
+          rsync -a "$APP/.next/static/" /tmp/release/.next/static/
+          [ -d "$APP/public" ] && rsync -a "$APP/public/" /tmp/release/public/ || true
+
+      # ---------------------------------------------------------------------
+      # Transport SSH (ADR-0001) + activation (ADR-0002)
+      # ---------------------------------------------------------------------
+      - name: Configurer la clé SSH
+        run: |
+          mkdir -p ~/.ssh
+          umask 077
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.SSH_PORT }}" -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Envoyer la release sur le serveur
+        run: |
+          rsync -az -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=yes" \
+            --mkpath \
+            /tmp/release/ \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ inputs.deploy_path }}/releases/${{ steps.meta.outputs.timestamp }}/"
+
+      - name: Envoyer les scripts de déploiement (toujours à jour, ADR-0004)
+        run: |
+          rsync -az -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=yes" \
+            --mkpath \
+            deploy-kit/scripts/ \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ inputs.deploy_path }}/.deploy-scripts/"
+
+      - name: Activer la release (bascule symlink + restart + healthcheck)
+        run: |
+          SCRIPT="deploy-laravel.sh"
+          [ "${{ inputs.stack }}" = "nextjs-passenger" ] && SCRIPT="deploy-nextjs-passenger.sh"
+
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.SSH_PORT }} -o StrictHostKeyChecking=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "DEPLOY_PATH='${{ inputs.deploy_path }}' TIMESTAMP='${{ steps.meta.outputs.timestamp }}' KEEP_RELEASES='${{ inputs.keep_releases }}' HEALTH_CHECK_URL='${{ inputs.health_check_url }}' bash '${{ inputs.deploy_path }}/.deploy-scripts/${SCRIPT}'"

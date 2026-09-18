@@ -1,0 +1,64 @@
+# Exemple : .github/workflows/deploy-backend.yml dans un projet consommateur
+# (copier-adapter — ceci est la SEULE chose qu'un projet doit porter en plus
+# de ses secrets GitHub et de sa propre CI de tests, voir ADR-0004 et ADR-0005).
+
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+
+jobs:
+  ci:
+    # Réutilise ta CI existante (tests/lint) — le déploiement ne démarre
+    # que si elle passe. Adapter au workflow de tests réel du projet.
+    uses: ./.github/workflows/ci-backend.yml
+
+  deploy:
+    needs: ci
+    uses: eymryc/xsel-deploy-mutualise/.github/workflows/deploy.yml@main
+    with:
+      stack: laravel
+      app_path: backend
+      deploy_path: /home/xselcpaneluser/api.peci.org
+      health_check_url: https://api.peci.org/up
+      keep_releases: 5
+    secrets:
+      SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+      SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+      SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+---
+# Exemple : .github/workflows/deploy-frontend.yml (même projet, deuxième app)
+
+name: Deploy frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-frontend.yml
+
+  deploy:
+    needs: ci
+    uses: eymryc/xsel-deploy-mutualise/.github/workflows/deploy.yml@main
+    with:
+      stack: nextjs-passenger
+      app_path: frontend
+      deploy_path: /home/xselcpaneluser/peci.org
+      health_check_url: https://peci.org
+      keep_releases: 5
+    secrets:
+      SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+      SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+      SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
