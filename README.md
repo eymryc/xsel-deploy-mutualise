@@ -27,10 +27,13 @@ Voir les décisions d'architecture dans [`docs/adr/`](docs/adr/) :
 
 cPanel → *SSH Access* → *Manage SSH Keys* → **Generate a New Key**.
 - Nom : `github-actions-deploy` (ou similaire).
-- **Passphrase : laisser vide** (l'automatisation ne peut pas la saisir).
-- Générer, puis dans la liste *Private Keys*, cliquer **Manage** sur cette
-  clé → **Authorize** (sans ça, la connexion SSH sera refusée même avec la
-  bonne clé).
+- **Passphrase** : ce formulaire l'exige (min. 5 caractères, force ≥ 80) —
+  impossible de la laisser vide ici, contrairement à d'autres versions de
+  cPanel. Utiliser **Password Generator** pour en remplir une, la noter
+  temporairement (nécessaire une seule fois, à l'étape 3).
+- **Generate Key**, puis dans la liste *Private Keys*, cliquer **Manage**
+  sur cette clé → **Authorize** (sans ça, la connexion SSH sera refusée
+  même avec la bonne clé).
 
 ### 2. Récupérer host / port / utilisateur SSH
 
@@ -46,11 +49,23 @@ ssh moncpaneluser@monserveur.exemple.com -p 21098
 - `21098` → `DEPLOY_SSH_PORT` (souvent différent de 22 sur du mutualisé —
   bien vérifier, ne pas supposer 22)
 
-### 3. Télécharger la clé privée générée à l'étape 1
+### 3. Télécharger la clé privée et retirer sa passphrase
 
 Toujours dans *Manage SSH Keys*, sur la clé créée : **View/Download** →
 télécharger le fichier de clé privée (pas la `.pub`) quelque part sur ta
 machine, ex. `~/Downloads/github-actions-deploy`.
+
+GitHub Actions ne peut pas saisir de passphrase à la connexion : il faut
+la retirer localement (la clé reste chiffrée au repos côté GitHub une fois
+stockée en secret, donc ce n'est pas une perte de protection pour cet
+usage) :
+
+```bash
+ssh-keygen -p -f ~/Downloads/github-actions-deploy
+```
+
+Saisir l'ancienne passphrase (celle du Password Generator à l'étape 1),
+puis laisser la nouvelle **vide** (Entrée) aux deux invites suivantes.
 
 ### 4. Ajouter les 4 secrets GitHub Actions
 
